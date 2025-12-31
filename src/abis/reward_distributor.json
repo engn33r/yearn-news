@@ -1,0 +1,16 @@
+[
+  {
+    "name": "getWeek",
+    "type": "function",
+    "stateMutability": "view",
+    "inputs": [],
+    "outputs": [{"name": "week", "type": "uint256"}]
+  },
+  {
+    "name": "weeklyRewardAmount",
+    "type": "function",
+    "stateMutability": "view",
+    "inputs": [{"name": "week", "type": "uint256"}],
+    "outputs": [{"name": "amount", "type": "uint256"}]
+  }
+]

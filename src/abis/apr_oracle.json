@@ -1,0 +1,14 @@
+[
+  {
+    "inputs": [
+      {"internalType": "address", "name": "_vault", "type": "address"},
+      {"internalType": "int256", "name": "_delta", "type": "int256"}
+    ],
+    "name": "getExpectedApr",
+    "outputs": [
+      {"internalType": "uint256", "name": "apr", "type": "uint256"}
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  }
+]

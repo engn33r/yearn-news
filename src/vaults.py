@@ -1,0 +1,188 @@
+from typing import Any
+
+from utils import (
+    APR_ORACLE_ADDRESS,
+    CHAINS,
+    REGISTRY_ADDRESSES,
+    fetch_btc_price,
+    fetch_eth_price,
+    fetch_sky_price,
+    get_web3,
+    load_abi,
+    multicall,
+)
+
+# Vault types
+MULTI_STRATEGY_TYPE = 1
+
+# Crypto tokens by type (everything else is USD, worth $1)
+WETH_ADDRESSES = {
+    "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",  # mainnet
+    "0x4200000000000000000000000000000000000006",  # base
+    "0x82af49447d8a07e3bd95bd0d56f35241523fbab1",  # arbitrum
+}
+
+WBTC_ADDRESSES = {
+    "0x2260fac5e5542a773aa44fbcfedf7c193bc2c599",  # mainnet
+    "0x2f2a2543b76a4166549f7aab2e75bef0aefc5b0f",  # arbitrum
+    "0x0555e30da8f98308edb960aa94c0db47230d2b9c",  # base
+    "0x0913da6da4b42f538b445599b46bb4622342cf52",  # katana
+    "0xcbb7c0000ab88b473b1f5afd9ef808440eed33bf",  # cbBTC mainnet/base
+}
+
+SKY = "0x56072c95faa701256059aa122697b133aded9279"
+
+CRYPTO_TOKENS = WETH_ADDRESSES | WBTC_ADDRESSES | {SKY}
+
+# Vaults to exclude
+EXCLUDED_VAULTS = {
+    "0x252b965400862d94BDa35FeCF7Ee0f204a53Cc36",
+}
+
+
+def get_data() -> dict[str, Any]:
+    """Fetch top V3 Multi Strategy vaults from on-chain registries."""
+    usd_vaults: list[dict[str, Any]] = []
+    crypto_vaults: list[dict[str, Any]] = []
+
+    eth_price = fetch_eth_price()
+    btc_price = fetch_btc_price()
+    sky_price = fetch_sky_price()
+
+    registry_abi = load_abi("registry")
+    vault_abi = load_abi("vault")
+    apr_oracle_abi = load_abi("apr_oracle")
+
+    for chain_name, chain_info in CHAINS.items():
+        try:
+            w3 = get_web3(chain_name)
+        except ValueError:
+            continue
+
+        # Query all registries and collect vault addresses
+        vault_addresses = []
+        registry_for_vault = {}  # Track which registry each vault came from
+
+        for registry_addr in REGISTRY_ADDRESSES:
+            registry = w3.eth.contract(
+                address=w3.to_checksum_address(registry_addr),
+                abi=registry_abi,
+            )
+
+            try:
+                all_vaults = registry.functions.getAllEndorsedVaults().call()
+                for sublist in all_vaults:
+                    for addr in sublist:
+                        if addr not in registry_for_vault:
+                            vault_addresses.append(addr)
+                            registry_for_vault[addr] = registry_addr
+            except Exception:
+                continue
+
+        if not vault_addresses:
+            continue
+
+        vault_contract = w3.eth.contract(abi=vault_abi)
+        apr_oracle = w3.eth.contract(
+            address=w3.to_checksum_address(APR_ORACLE_ADDRESS),
+            abi=apr_oracle_abi,
+        )
+
+        # First multicall: get vaultInfo to filter for Multi Strategy vaults
+        info_calls = []
+        for addr in vault_addresses:
+            checksum_addr = w3.to_checksum_address(addr)
+            reg_addr = registry_for_vault[addr]
+            registry = w3.eth.contract(address=w3.to_checksum_address(reg_addr), abi=registry_abi)
+            info_calls.append((reg_addr, registry.encode_abi("vaultInfo", args=[checksum_addr])))
+
+        info_results = multicall(w3, info_calls)
+
+        # Filter for Multi Strategy vaults only
+        multi_strategy_vaults = []
+        for i, addr in enumerate(vault_addresses):
+            if addr in EXCLUDED_VAULTS:
+                continue
+
+            success, data = info_results[i]
+            if not success:
+                continue
+
+            decoded = w3.codec.decode(["address", "uint96", "uint64", "uint128", "uint64", "string"], data)
+            vault_type = decoded[2]
+
+            if vault_type == MULTI_STRATEGY_TYPE:
+                multi_strategy_vaults.append(addr)
+
+        if not multi_strategy_vaults:
+            continue
+
+        # Second multicall: get name, asset, totalAssets, decimals, and APR
+        calls = []
+        for addr in multi_strategy_vaults:
+            checksum_addr = w3.to_checksum_address(addr)
+            calls.append((addr, vault_contract.encode_abi("name")))
+            calls.append((addr, vault_contract.encode_abi("asset")))
+            calls.append((addr, vault_contract.encode_abi("totalAssets")))
+            calls.append((addr, vault_contract.encode_abi("decimals")))
+            calls.append((APR_ORACLE_ADDRESS, apr_oracle.encode_abi("getExpectedApr", args=[checksum_addr, 0])))
+
+        results = multicall(w3, calls)
+
+        for i, addr in enumerate(multi_strategy_vaults):
+            base_idx = i * 5
+            name_success, name_data = results[base_idx]
+            asset_success, asset_data = results[base_idx + 1]
+            total_assets_success, total_assets_data = results[base_idx + 2]
+            decimals_success, decimals_data = results[base_idx + 3]
+            apr_success, apr_data = results[base_idx + 4]
+
+            if not all([name_success, asset_success, total_assets_success, decimals_success]):
+                continue
+
+            name = w3.codec.decode(["string"], name_data)[0]
+
+            # Skip Liquid Locker Compounder vaults
+            if "Liquid Locker Compounder" in name:
+                continue
+
+            asset = w3.codec.decode(["address"], asset_data)[0].lower()
+            total_assets = w3.codec.decode(["uint256"], total_assets_data)[0]
+            decimals = w3.codec.decode(["uint8"], decimals_data)[0]
+
+            apr_pct = 0.0
+            if apr_success:
+                apr_raw = w3.codec.decode(["uint256"], apr_data)[0]
+                apr_pct = (apr_raw / 1e18) * 100
+
+            # Calculate TVL
+            amount = total_assets / (10**decimals)
+            if asset in WETH_ADDRESSES:
+                tvl_usd = amount * eth_price
+            elif asset in WBTC_ADDRESSES:
+                tvl_usd = amount * btc_price
+            elif asset == SKY:
+                tvl_usd = amount * sky_price
+            else:
+                # Stablecoins assume $1
+                tvl_usd = amount
+
+            chain_id = chain_info["chain_id"]
+            vault = {
+                "name": name,
+                "chain": chain_name,
+                "chain_id": chain_id,
+                "address": addr,
+                "apr": apr_pct,
+                "tvl_usd": tvl_usd,
+            }
+
+            if asset in CRYPTO_TOKENS:
+                crypto_vaults.append(vault)
+            else:
+                usd_vaults.append(vault)
+
+    usd_vaults.sort(key=lambda x: x["apr"], reverse=True)
+    crypto_vaults.sort(key=lambda x: x["apr"], reverse=True)
+
+    return {"top_usd": usd_vaults[:5], "top_crypto": crypto_vaults[:5]}
