@@ -6,11 +6,14 @@ from utils import (
     REGISTRY_ADDRESSES,
     fetch_btc_price,
     fetch_eth_price,
+    fetch_json,
     fetch_sky_price,
     get_web3,
     load_abi,
     multicall,
 )
+
+KATANA_APR_API = "https://katana-apr-service.vercel.app/api/vaults"
 
 # Vault types
 MULTI_STRATEGY_TYPE = 1
@@ -20,6 +23,7 @@ WETH_ADDRESSES = {
     "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",  # mainnet
     "0x4200000000000000000000000000000000000006",  # base
     "0x82af49447d8a07e3bd95bd0d56f35241523fbab1",  # arbitrum
+    "0xee7d8bcfb72bc1880d0cf19822eb0a2e6577ab62",  # katana
 }
 
 WBTC_ADDRESSES = {
@@ -40,6 +44,23 @@ EXCLUDED_VAULTS = {
 }
 
 
+def fetch_katana_aprs() -> dict[str, float]:
+    """Fetch APRs from Katana API. Returns dict of address -> APR percentage."""
+    try:
+        data = fetch_json(KATANA_APR_API)
+        aprs = {}
+        for addr, vault_data in data.items():
+            extra = vault_data.get("apr", {}).get("extra", {})
+            katana_app_rewards = extra.get("katanaAppRewardsAPR", 0) or 0
+            fixed_rate_rewards = extra.get("FixedRateKatanaRewards", 0) or 0
+            native_yield = extra.get("katanaNativeYield", 0) or 0
+            total_apr = katana_app_rewards + fixed_rate_rewards + native_yield
+            aprs[addr.lower()] = total_apr * 100  # Convert to percentage
+        return aprs
+    except Exception:
+        return {}
+
+
 def get_data() -> dict[str, Any]:
     """Fetch top V3 Multi Strategy vaults from on-chain registries."""
     usd_vaults: list[dict[str, Any]] = []
@@ -48,6 +69,7 @@ def get_data() -> dict[str, Any]:
     eth_price = fetch_eth_price()
     btc_price = fetch_btc_price()
     sky_price = fetch_sky_price()
+    katana_aprs = fetch_katana_aprs()
 
     registry_abi = load_abi("registry")
     vault_abi = load_abi("vault")
@@ -117,7 +139,8 @@ def get_data() -> dict[str, Any]:
         if not multi_strategy_vaults:
             continue
 
-        # Second multicall: get name, asset, totalAssets, decimals, and APR
+        # Second multicall: get name, asset, totalAssets, decimals, and APR (except Katana)
+        is_katana = chain_name == "katana"
         calls = []
         for addr in multi_strategy_vaults:
             checksum_addr = w3.to_checksum_address(addr)
@@ -125,17 +148,18 @@ def get_data() -> dict[str, Any]:
             calls.append((addr, vault_contract.encode_abi("asset")))
             calls.append((addr, vault_contract.encode_abi("totalAssets")))
             calls.append((addr, vault_contract.encode_abi("decimals")))
-            calls.append((APR_ORACLE_ADDRESS, apr_oracle.encode_abi("getStrategyApr", args=[checksum_addr, 0])))
+            if not is_katana:
+                calls.append((APR_ORACLE_ADDRESS, apr_oracle.encode_abi("getStrategyApr", args=[checksum_addr, 0])))
 
         results = multicall(w3, calls)
+        calls_per_vault = 4 if is_katana else 5
 
         for i, addr in enumerate(multi_strategy_vaults):
-            base_idx = i * 5
+            base_idx = i * calls_per_vault
             name_success, name_data = results[base_idx]
             asset_success, asset_data = results[base_idx + 1]
             total_assets_success, total_assets_data = results[base_idx + 2]
             decimals_success, decimals_data = results[base_idx + 3]
-            apr_success, apr_data = results[base_idx + 4]
 
             if not all([name_success, asset_success, total_assets_success, decimals_success]):
                 continue
@@ -146,14 +170,23 @@ def get_data() -> dict[str, Any]:
             if "Liquid Locker Compounder" in name:
                 continue
 
+            # Only include vaults with yVault, BOLD, or USDaf in name
+            if not any(x in name for x in ("yVault", "BOLD", "USDaf")):
+                continue
+
             asset = w3.codec.decode(["address"], asset_data)[0].lower()
             total_assets = w3.codec.decode(["uint256"], total_assets_data)[0]
             decimals = w3.codec.decode(["uint8"], decimals_data)[0]
 
-            apr_pct = 0.0
-            if apr_success:
-                apr_raw = w3.codec.decode(["uint256"], apr_data)[0]
-                apr_pct = (apr_raw / 1e18) * 100
+            # Get APR from Katana API or APR oracle
+            if is_katana:
+                apr_pct = katana_aprs.get(addr.lower(), 0.0)
+            else:
+                apr_success, apr_data = results[base_idx + 4]
+                apr_pct = 0.0
+                if apr_success:
+                    apr_raw = w3.codec.decode(["uint256"], apr_data)[0]
+                    apr_pct = (apr_raw / 1e18) * 100
 
             # Calculate TVL
             amount = total_assets / (10**decimals)
@@ -178,8 +211,10 @@ def get_data() -> dict[str, Any]:
             }
 
             if asset in CRYPTO_TOKENS:
+                print("crypto: ", asset)
                 crypto_vaults.append(vault)
             else:
+                print("usd: ", asset)
                 usd_vaults.append(vault)
 
     usd_vaults.sort(key=lambda x: x["apr"], reverse=True)
