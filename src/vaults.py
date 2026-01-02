@@ -125,7 +125,7 @@ def get_data() -> dict[str, Any]:
             calls.append((addr, vault_contract.encode_abi("asset")))
             calls.append((addr, vault_contract.encode_abi("totalAssets")))
             calls.append((addr, vault_contract.encode_abi("decimals")))
-            calls.append((APR_ORACLE_ADDRESS, apr_oracle.encode_abi("getExpectedApr", args=[checksum_addr, 0])))
+            calls.append((APR_ORACLE_ADDRESS, apr_oracle.encode_abi("getStrategyApr", args=[checksum_addr, 0])))
 
         results = multicall(w3, calls)
 
