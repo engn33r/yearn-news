@@ -20,7 +20,23 @@
     "year": 2026,
     "distributor_week": 81,
     "rewards_vault_tokens": 45510.9801885091,
-    "rewards_crvusd": 51029.94338950542,
-    "price_per_share": 1.121266630121708
+    "rewards_crvusd": 51060.93262103699,
+    "price_per_share": 1.1219475478124108
+  },
+  {
+    "week": 2,
+    "year": 2026,
+    "distributor_week": 82,
+    "rewards_vault_tokens": 41783.21951977695,
+    "rewards_crvusd": 46938.31433438291,
+    "price_per_share": 1.1233771565201178
+  },
+  {
+    "week": 3,
+    "year": 2026,
+    "distributor_week": 83,
+    "rewards_vault_tokens": 49536.39975533523,
+    "rewards_crvusd": 55685.2015267931,
+    "price_per_share": 1.1241269410338126
   }
 ]

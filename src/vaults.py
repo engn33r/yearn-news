@@ -8,6 +8,7 @@ from utils import (
     fetch_eth_price,
     fetch_json,
     fetch_sky_price,
+    fetch_yyb_price,
     get_web3,
     load_abi,
     multicall,
@@ -35,8 +36,9 @@ WBTC_ADDRESSES = {
 }
 
 SKY = "0x56072c95faa701256059aa122697b133aded9279"
+YYB = "0x22222222aea0076fca927a3f44dc0b4fdf9479d6"
 
-CRYPTO_TOKENS = WETH_ADDRESSES | WBTC_ADDRESSES | {SKY}
+CRYPTO_TOKENS = WETH_ADDRESSES | WBTC_ADDRESSES | {SKY, YYB}
 
 # Vaults to exclude
 EXCLUDED_VAULTS = {
@@ -69,6 +71,7 @@ def get_data() -> dict[str, Any]:
     eth_price = fetch_eth_price()
     btc_price = fetch_btc_price()
     sky_price = fetch_sky_price()
+    yyb_price = fetch_yyb_price()
     katana_aprs = fetch_katana_aprs()
 
     registry_abi = load_abi("registry")
@@ -196,6 +199,8 @@ def get_data() -> dict[str, Any]:
                 tvl_usd = amount * btc_price
             elif asset == SKY:
                 tvl_usd = amount * sky_price
+            elif asset == YYB:
+                tvl_usd = amount * yyb_price
             else:
                 # Stablecoins assume $1
                 tvl_usd = amount
@@ -211,10 +216,8 @@ def get_data() -> dict[str, Any]:
             }
 
             if asset in CRYPTO_TOKENS:
-                print("crypto: ", asset)
                 crypto_vaults.append(vault)
             else:
-                print("usd: ", asset)
                 usd_vaults.append(vault)
 
     usd_vaults.sort(key=lambda x: x["apr"], reverse=True)

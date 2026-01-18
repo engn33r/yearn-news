@@ -38,7 +38,7 @@ This week yCRV stakers received **{rewards} crvUSD** rewards, compared to **{pre
 # yYB
 # ------------------------------------------------------------
 YYB = """
-yYB updates coming soon!
+This week yYB stakers received **{rewards} crvUSD** rewards, compared to **{prev_rewards} crvUSD** in the prior week, for a week-over-week change of **{wow}%**
 """
 
 # ------------------------------------------------------------

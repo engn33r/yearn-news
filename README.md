@@ -39,7 +39,7 @@
 
 Run:
 ```shell
-python generate.py
+python src/generate.py
 ```
 
 Output is written to `output.md` in Markdown format.

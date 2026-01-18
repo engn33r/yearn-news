@@ -5,6 +5,7 @@ import content
 import tvl
 import vaults
 import ycrv
+import yyb
 from utils import fmt_usd, get_week_and_year
 
 OUTPUT_FILE = Path(__file__).parent.parent / "output.md"
@@ -100,8 +101,16 @@ def render_ycrv(data: dict[str, Any]) -> str:
     return "## yCRV" + text
 
 
-def render_yyb() -> str:
-    return "## yYB" + content.YYB
+def render_yyb(data: dict[str, Any]) -> str:
+    if data["wow_pct"] is None or data["prev_rewards_crvusd"] is None:
+        return f"## yYB\nThis week yYB stakers received **{data['rewards_crvusd']:,.2f} crvUSD** rewards."
+    wow = f"+{data['wow_pct']:.1f}" if data["wow_pct"] > 0 else f"{data['wow_pct']:.1f}"
+    text = content.YYB.format(
+        rewards=f"{data['rewards_crvusd']:,.2f}",
+        prev_rewards=f"{data['prev_rewards_crvusd']:,.2f}",
+        wow=wow,
+    )
+    return "## yYB" + text
 
 
 def render_alpha() -> str:
@@ -122,13 +131,14 @@ def generate() -> None:
     tvl_data = tvl.get_data()
     vaults_data = vaults.get_data()
     ycrv_data = ycrv.get_data()
+    yyb_data = yyb.get_data()
 
     sections = [
         render_overview(week, year),
         render_glance(tvl_data),
         render_vaults(vaults_data),
         render_ycrv(ycrv_data),
-        render_yyb(),
+        render_yyb(yyb_data),
         render_alpha(),
         render_disclaimer(),
         render_sign_off(),

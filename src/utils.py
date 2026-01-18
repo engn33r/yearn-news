@@ -123,6 +123,11 @@ def fetch_sky_price() -> float:
     return float(data["coins"]["ethereum:0x56072C95FAA701256059aa122697B133aDEd9279"]["price"])
 
 
+def fetch_yyb_price() -> float:
+    data = fetch_json("https://coins.llama.fi/prices/current/ethereum:0x22222222aEA0076fCA927a3f44dc0B4FdF9479D6")
+    return float(data["coins"]["ethereum:0x22222222aEA0076fCA927a3f44dc0B4FdF9479D6"]["price"])
+
+
 def fmt_usd(val: float) -> str:
     if val >= 1_000_000_000:
         return f"${val / 1_000_000_000:.2f}B"
